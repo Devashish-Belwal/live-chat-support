@@ -6,8 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --parallel dev",
-    "dev:web": "bun run --filter web dev",
-    "dev:backend": "bun run --filter backend dev"
+    "dev:web": "cd apps/web && bun run dev",
+    "dev:backend": "cd apps/backend && bun run dev"
   }
 }
