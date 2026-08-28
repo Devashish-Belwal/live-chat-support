@@ -1,0 +1,13 @@
+{
+  "name": "live-chat-support",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --parallel dev",
+    "dev:web": "bun run --filter web dev",
+    "dev:backend": "bun run --filter backend dev"
+  }
+}
