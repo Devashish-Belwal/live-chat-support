@@ -1,0 +1,70 @@
+// use prisma-next
+
+enum Role {
+  @@type("pg/text@1")
+
+  CANDIDATE
+  AGENT
+  SUPERVISOR
+  ADMIN
+}
+
+enum ConversationStatus {
+  @@type("pg/text@1")
+
+  ACTIVE
+  CLOSED
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role
+
+  supervisorId Int?
+  supervisor   User?    @relation("SupervisorAgents", fields: [supervisorId], references: [id])
+  agents       User[]   @relation("SupervisorAgents")
+
+  candidateConversations Conversation[] @relation("CandidateConversations")
+  assignedConversations  Conversation[] @relation("AssignedConversations")
+
+  messages Message[]
+
+  createdAt TimestamptzString @default(now())
+  updatedAt TimestamptzString @default(now())
+}
+
+model Conversation {
+  id          Int                @id @default(autoincrement())
+  candidateId Int
+  agentId     Int?
+  status      ConversationStatus @default(ACTIVE)
+  createdAt TimestamptzString @default(now())
+  closedAt TimestamptzString?
+
+  candidate User  @relation("CandidateConversations", fields: [candidateId], references: [id])
+  agent     User? @relation("AssignedConversations", fields: [agentId], references: [id])
+
+  messages Message[]
+
+  @@index([candidateId])
+  @@index([agentId])
+  @@index([status])
+}
+
+model Message {
+  id             Int      @id @default(autoincrement())
+  conversationId Int
+  senderId       Int
+  senderRole     Role
+  content        String
+  createdAt TimestamptzString @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  sender       User         @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId])
+  @@index([senderId])
+}
