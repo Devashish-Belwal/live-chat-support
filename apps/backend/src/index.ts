@@ -1,39 +1,35 @@
+import cookieParser from 'cookie-parser';
 import express from "express";
+import cors from 'cors';
 import { createServer } from "node:http";
 
 import {
     connectRedis,
     disconnectRedis,
+    redis,
 } from "./redis";
 import authRouter from "./auth/auth.routes";
 import conversationRouter from "./conversations/conversation.routes";
-import { type AuthenticatedRequest, requireAuth } from "./auth/auth.middleware";
+import adminRouter from "./admin/admin.routes";
+import supervisorRouter from "./supervisor/supervisor.routes";
 import { createWebSocketServer } from "./ws/ws.server";
 
 const app = express();
 
 app.use(express.json());
-app.use("/api/auth", authRouter);
-app.use("/api/conversations", conversationRouter);
+app.use(cookieParser());
+app.use(cors({ credentials: true, origin: true }));
+
+app.use("/auth", authRouter);
+app.use("/conversations", conversationRouter);
+app.use("/admin", adminRouter);
+app.use("/supervisor", supervisorRouter);
 
 app.get("/", (_req, res) => {
     res.json({
         message: "Backend is running",
     });
 });
-
-
-
-app.get("/api/auth/me", requireAuth, (req, res) => {
-    const user = (req as AuthenticatedRequest).user;
-
-    res.json({
-        user,
-    });
-});
-
-
-
 
 const server = createServer(app);
 

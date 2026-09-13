@@ -1,6 +1,6 @@
 import { Router } from "express";
 
-import { requireAuth } from "../auth/auth.middleware";
+import { requireAuth, requireRole } from "../auth/auth.middleware";
 import {
     create,
     list,
@@ -11,10 +11,10 @@ import {
 
 const conversationRouter = Router();
 
-conversationRouter.post("/", requireAuth, create);
+conversationRouter.post("/", requireAuth, requireRole("CANDIDATE"), create);
 conversationRouter.get("/", requireAuth, list);
 conversationRouter.get("/:id", requireAuth, get);
 conversationRouter.post("/:id/assign", requireAuth, assign);
-conversationRouter.patch("/:id/close", requireAuth, close);
+conversationRouter.post("/:id/close", requireAuth, requireRole("AGENT"), close);
 
 export default conversationRouter;

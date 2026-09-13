@@ -1,28 +1,22 @@
 import { db } from "../prisma/db";
 import type { UserRole } from "../auth/auth.middleware";
+import { rooms, type InMemoryMessage } from "./conversation.rooms";
+import { withConversationLock } from "./conversation.lock";
 
 interface CreateConversationInput {
     userId: number;
     role: UserRole;
-    candidateId?: number;
 }
 
 export async function createConversation({
     userId,
     role,
-    candidateId,
 }: CreateConversationInput) {
-    let resolvedCandidateId: number;
-
-    if (role === "CANDIDATE") {
-        resolvedCandidateId = userId;
-    } else {
-        if (!candidateId) {
-            throw new Error("CANDIDATE_ID_REQUIRED");
-        }
-
-        resolvedCandidateId = candidateId;
+    if (role !== "CANDIDATE") {
+        throw new Error("FORBIDDEN");
     }
+
+    const resolvedCandidateId = userId;
 
     const candidate = await db.orm.public.User
         .where({
@@ -36,6 +30,18 @@ export async function createConversation({
 
     if (candidate.role !== "CANDIDATE") {
         throw new Error("INVALID_CANDIDATE");
+    }
+
+    const activeConversation =
+        await db.orm.public.Conversation
+            .where({
+                candidateId: resolvedCandidateId,
+                status: "ACTIVE",
+            })
+            .first();
+
+    if (activeConversation) {
+        throw new Error("ACTIVE_CONVERSATION_EXISTS");
     }
 
     return db.orm.public.Conversation.create({
@@ -79,18 +85,35 @@ export async function listConversations(
 
             const agentIds = agents.map((agent) => agent.id);
 
-            if (agentIds.length === 0) {
-                return [];
-            }
+            const assigned = agentIds.length > 0
+                ? await db.orm.public.Conversation
+                    .where((conversation) =>
+                        conversation.agentId.in(agentIds),
+                    )
+                    .include("agent")
+                    .orderBy((conversation) =>
+                        conversation.createdAt.desc(),
+                    )
+                    .all()
+                : [];
 
-            return db.orm.public.Conversation
-                .where((conversation) =>
-                    conversation.agentId.in(agentIds),
-                )
+            const unassigned = await db.orm.public.Conversation
+                .where({ agentId: null })
+                .include("agent")
                 .orderBy((conversation) =>
                     conversation.createdAt.desc(),
                 )
                 .all();
+
+            const seen = new Set<number>();
+            const result = [];
+            for (const c of [...assigned, ...unassigned]) {
+                if (!seen.has(c.id)) {
+                    seen.add(c.id);
+                    result.push(c);
+                }
+            }
+            return result;
         }
 
         case "ADMIN":
@@ -112,6 +135,7 @@ export async function authorizeConversationAccess(
             id: conversationId,
         })
         .include("agent")
+        .include("messages")
         .first();
 
     if (!conversation) {
@@ -133,8 +157,9 @@ export async function authorizeConversationAccess(
 
         case "SUPERVISOR":
             if (
-                !conversation.agent ||
-                conversation.agent.supervisorId !== userId
+                conversation.agentId !== null &&
+                (!conversation.agent ||
+                 conversation.agent.supervisorId !== userId)
             ) {
                 throw new Error("FORBIDDEN");
             }
@@ -198,6 +223,18 @@ export async function assignConversation(
         throw new Error("AGENT_NOT_UNDER_SUPERVISOR");
     }
 
+    // Supervisor may only assign conversations in their scope
+    if (role === "SUPERVISOR") {
+        if (conversation.agentId !== null) {
+            const currentAgent = await db.orm.public.User
+                .where({ id: conversation.agentId })
+                .first();
+            if (!currentAgent || currentAgent.supervisorId !== userId) {
+                throw new Error("AGENT_NOT_UNDER_SUPERVISOR");
+            }
+        }
+    }
+
     return db.orm.public.Conversation
         .where({
             id: conversationId,
@@ -212,51 +249,76 @@ export async function closeConversation(
     userId: number,
     role: UserRole,
 ) {
-    const conversation = await db.orm.public.Conversation
-        .where({
-            id: conversationId,
-        })
-        .include("agent")
-        .first();
-
-    if (!conversation) {
-        throw new Error("CONVERSATION_NOT_FOUND");
-    }
-
-    switch (role) {
-        case "CANDIDATE":
+    return withConversationLock(conversationId, async () => {
+        if (role !== "AGENT") {
             throw new Error("FORBIDDEN");
+        }
 
-        case "AGENT":
-            if (conversation.agentId !== userId) {
-                throw new Error("FORBIDDEN");
-            }
-            break;
+        const conversation = await db.orm.public.Conversation
+            .where({
+                id: conversationId,
+            })
+            .include("agent")
+            .first();
 
-        case "SUPERVISOR":
-            if (
-                !conversation.agent ||
-                conversation.agent.supervisorId !== userId
-            ) {
-                throw new Error("FORBIDDEN");
-            }
-            break;
+        if (!conversation) {
+            throw new Error("CONVERSATION_NOT_FOUND");
+        }
 
-        case "ADMIN":
-            break;
-    }
+        if (conversation.agentId !== userId) {
+            throw new Error("FORBIDDEN");
+        }
 
-    // Idempotent: closing an already closed conversation is fine.
-    if (conversation.status === "CLOSED") {
-        return conversation;
-    }
+        // Idempotent: closing an already closed conversation is fine.
+        if (conversation.status === "CLOSED") {
+            return conversation;
+        }
 
-    return db.orm.public.Conversation
-        .where({
-            id: conversationId,
-        })
-        .update({
-            status: "CLOSED",
-            closedAt: new Date().toISOString(),
-        });
+        // Persist any in-memory messages from the room to PostgreSQL.
+        const room = rooms.get(conversationId);
+
+        if (room && room.messages.length > 0) {
+            await db.transaction(async (tx) => {
+                for (const message of room.messages as InMemoryMessage[]) {
+                    await tx.orm.public.Message.create({
+                        conversationId: message.conversationId,
+                        senderId: message.senderId,
+                        senderRole: message.senderRole as "CANDIDATE" | "AGENT" | "SUPERVISOR" | "ADMIN",
+                        content: message.content,
+                        createdAt: message.createdAt,
+                    });
+                }
+
+                await tx.orm.public.Conversation
+                    .where({
+                        id: conversationId,
+                    })
+                    .update({
+                        status: "CLOSED",
+                        closedAt: new Date().toISOString(),
+                    });
+            });
+        } else {
+            await db.orm.public.Conversation
+                .where({
+                    id: conversationId,
+                })
+                .update({
+                    status: "CLOSED",
+                    closedAt: new Date().toISOString(),
+                });
+        }
+
+        // Clean up the in-memory room after persistence.
+        if (room) {
+            rooms.delete(conversationId);
+        }
+
+        return db.orm.public.Conversation
+            .where({
+                id: conversationId,
+            })
+            .include("agent")
+            .first();
+    });
 }

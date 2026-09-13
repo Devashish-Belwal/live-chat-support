@@ -23,11 +23,27 @@ export async function registerUser(input: RegisterInput) {
         name: input.name,
     });
 
-    return {
+    const accessToken = await createAccessToken({
         id: user.id,
-        email: user.email,
-        name: user.name,
         role: user.role,
+    });
+
+    const refreshToken = generateRefreshToken();
+
+    await createSession(refreshToken, {
+        userId: user.id,
+        role: user.role,
+    });
+
+    return {
+        accessToken,
+        refreshToken,
+        user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+        },
     };
 }
 
@@ -74,6 +90,26 @@ export async function loginUser(input: {
             role: user.role,
         },
     };
+}
+
+export async function getCurrentUser(userId: number) {
+    const user = await db.orm.public.User
+        .where({
+            id: userId,
+        })
+        .select(
+            "id",
+            "email",
+            "name",
+            "role",
+        )
+        .first();
+
+    if (!user) {
+        throw new Error("USER_NOT_FOUND");
+    }
+
+    return user;
 }
 
 export async function refreshAccessToken(refreshToken: string) {

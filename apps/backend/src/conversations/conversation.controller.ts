@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import type { AuthenticatedRequest } from "../auth/auth.middleware";
 import { assignConversationSchema, createConversationSchema } from "./conversation.schema";
 import { assignConversation, closeConversation, createConversation, getConversation, listConversations } from "./conversation.service";
+import { rooms } from "./conversation.rooms";
 
 export async function create(
     req: Request,
@@ -23,22 +24,12 @@ export async function create(
         const conversation = await createConversation({
             userId: user.id,
             role: user.role,
-            candidateId: result.data.candidateId,
         });
 
         return res.status(201).json({
             conversation,
         });
     } catch (error) {
-        if (
-            error instanceof Error &&
-            error.message === "CANDIDATE_ID_REQUIRED"
-        ) {
-            return res.status(400).json({
-                error: "CANDIDATE_ID_REQUIRED",
-            });
-        }
-
         if (
             error instanceof Error &&
             error.message === "CANDIDATE_NOT_FOUND"
@@ -54,6 +45,31 @@ export async function create(
         ) {
             return res.status(400).json({
                 error: "INVALID_CANDIDATE",
+            });
+        }
+
+        if (
+            error instanceof Error &&
+            error.message === "ACTIVE_CONVERSATION_EXISTS"
+        ) {
+            return res.status(409).json({
+                error: "ACTIVE_CONVERSATION_EXISTS",
+            });
+        }
+
+        // Race-condition: PostgreSQL unique violation from conversation_candidate_id_active index
+        const isUniqueViolation = (
+            error instanceof Error &&
+            (
+                error.message?.includes("conversation_candidate_id_active") ||
+                (error as any)?.code === "23505" ||
+                (error as any)?.sqlState === "23505" ||
+                ((error as any)?.constraint ?? "").includes("conversation_candidate_id_active")
+            )
+        );
+        if (isUniqueViolation) {
+            return res.status(409).json({
+                error: "ACTIVE_CONVERSATION_EXISTS",
             });
         }
 
@@ -241,11 +257,23 @@ export async function close(
     }
 
     try {
+        const room = rooms.get(conversationId);
+        const socketsToNotify = room ? Array.from(room.sockets) : [];
+
         const conversation = await closeConversation(
             conversationId,
             user.id,
             user.role,
         );
+
+        for (const s of socketsToNotify) {
+            if (s.readyState === s.OPEN) {
+                s.send(JSON.stringify({
+                    event: "CONVERSATION_CLOSED",
+                    data: { conversationId: String(conversationId) },
+                }));
+            }
+        }
 
         return res.status(200).json({
             conversation,

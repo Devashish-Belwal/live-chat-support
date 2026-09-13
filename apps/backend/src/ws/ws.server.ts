@@ -2,8 +2,10 @@ import type { Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { jwtVerify } from "jose";
 
-import { authorizeConversationAccess } from "../conversations/conversation.service";
+import { authorizeConversationAccess, closeConversation } from "../conversations/conversation.service";
 import { db } from "../prisma/db";
+import { rooms } from "../conversations/conversation.rooms";
+import { withConversationLock } from "../conversations/conversation.lock";
 
 const secret = process.env.JWT_SECRET;
 
@@ -40,12 +42,6 @@ interface InMemoryMessage {
     createdAt: string;
 }
 
-interface ConversationRoom {
-    sockets: Set<WebSocket>;
-    messages: InMemoryMessage[];
-}
-
-const rooms = new Map<number, ConversationRoom>();
 const socketStates = new WeakMap<WebSocket, SocketState>();
 
 function isUserRole(value: unknown): value is UserRole {
@@ -223,11 +219,44 @@ async function handleJoinConversation(
             conversationId,
         );
 
+        // Send persisted message history
+        const persistedMessages = await db.orm.public.Message
+            .where({
+                conversationId: conversationId,
+            })
+            .orderBy((message) =>
+                message.createdAt.asc(),
+            )
+            .all();
+
+        // Send in-memory messages
+        const room = rooms.get(conversationId);
+        const memoryMessages = room?.messages || [];
+
+        // Combine and send all history
+        const allMessages = [
+            ...persistedMessages.map(msg => ({
+                conversationId: msg.conversationId,
+                senderId: msg.senderId,
+                senderRole: msg.senderRole.toLowerCase(),
+                content: msg.content,
+                createdAt: msg.createdAt,
+            })),
+            ...memoryMessages.map(msg => ({
+                conversationId: msg.conversationId,
+                senderId: msg.senderId,
+                senderRole: msg.senderRole.toLowerCase(),
+                content: msg.content,
+                createdAt: msg.createdAt,
+            }))
+        ];
+
         socket.send(
             JSON.stringify({
                 event: "JOINED_CONVERSATION",
                 data: {
                     conversationId,
+                    messages: allMessages,
                 },
             }),
         );
@@ -329,7 +358,8 @@ async function handleSendMessage(
 
     if (
         typeof content !== "string" ||
-        content.trim().length === 0
+        content.trim().length === 0 ||
+        content.length > 2000
     ) {
         sendError(
             socket,
@@ -347,40 +377,38 @@ async function handleSendMessage(
     }
 
     try {
-        const conversation =
-            await authorizeConversationAccess(
-                conversationId,
-                state.user.id,
-                state.user.role,
-            );
-
-        if (conversation.status !== "ACTIVE") {
-            sendError(
-                socket,
-                "Conversation is closed",
-            );
-            return;
-        }
-
-        const room = rooms.get(conversationId);
-
-        if (!room) {
-            sendError(
-                socket,
-                "Conversation room does not exist",
-            );
-            return;
-        }
-
-        const message: InMemoryMessage = {
+        const result = await withConversationLock(
             conversationId,
-            senderId: state.user.id,
-            senderRole: state.user.role,
-            content: content.trim(),
-            createdAt: new Date().toISOString(),
-        };
+            async () => {
+                const conversation =
+                    await authorizeConversationAccess(
+                        conversationId,
+                        state.user.id,
+                        state.user.role,
+                    );
 
-        room.messages.push(message);
+                if (conversation.status !== "ACTIVE") {
+                    throw new Error("CONVERSATION_CLOSED");
+                }
+
+                const room = rooms.get(conversationId);
+                if (!room) {
+                    throw new Error("ROOM_MISSING");
+                }
+
+                const message: InMemoryMessage = {
+                    conversationId,
+                    senderId: state.user.id,
+                    senderRole: state.user.role,
+                    content: content.trim(),
+                    createdAt: new Date().toISOString(),
+                };
+
+                room.messages.push(message);
+
+                return message;
+            },
+        );
 
         broadcast(
             conversationId,
@@ -388,15 +416,15 @@ async function handleSendMessage(
                 event: "NEW_MESSAGE",
                 data: {
                     conversationId: String(
-                        message.conversationId,
+                        result.conversationId,
                     ),
                     senderId: String(
-                        message.senderId,
+                        result.senderId,
                     ),
                     senderRole:
-                        message.senderRole.toLowerCase(),
-                    content: message.content,
-                    createdAt: message.createdAt,
+                        result.senderRole.toLowerCase(),
+                    content: result.content,
+                    createdAt: result.createdAt,
                 },
             },
         );
@@ -419,6 +447,28 @@ async function handleSendMessage(
             sendError(
                 socket,
                 "You are not allowed to send messages in this conversation",
+            );
+            return;
+        }
+
+        if (
+            error instanceof Error &&
+            error.message === "CONVERSATION_CLOSED"
+        ) {
+            sendError(
+                socket,
+                "Conversation is closed",
+            );
+            return;
+        }
+
+        if (
+            error instanceof Error &&
+            error.message === "ROOM_MISSING"
+        ) {
+            sendError(
+                socket,
+                "Conversation room does not exist",
             );
             return;
         }
@@ -487,10 +537,8 @@ function handleLeaveConversation(
 
     if (room) {
         room.sockets.delete(socket);
-
-        if (room.sockets.size === 0) {
-            rooms.delete(conversationId);
-        }
+        // DO NOT delete room here - preserve messages until explicit close
+        // Only clean up room when conversation is closed via service
     }
 
     state.conversations.delete(conversationId);
@@ -585,59 +633,39 @@ async function handleCloseConversation(
         }
 
         const room = rooms.get(conversationId);
-
         if (!room) {
-            sendError(
-                socket,
-                "Conversation room does not exist",
-            );
+            sendError(socket, "Conversation room does not exist");
             return;
         }
+        const socketsToNotify = Array.from(room.sockets);
 
-        await db.transaction(async (tx) => {
-            for (const message of room.messages) {
-                await tx.orm.public.Message.create({
-                    conversationId:
-                        message.conversationId,
-                    senderId: message.senderId,
-                    senderRole: message.senderRole,
-                    content: message.content,
-                    createdAt: message.createdAt,
-                });
-            }
-
-            await tx.orm.public.Conversation
-                .where({
-                    id: conversationId,
-                })
-                .update({
-                    status: "CLOSED",
-                    closedAt: new Date().toISOString(),
-                });
-        });
-
-        broadcast(
+        await closeConversation(
             conversationId,
-            {
-                event: "CONVERSATION_CLOSED",
-                data: {
-                    conversationId: String(
-                        conversationId,
-                    ),
-                },
-            },
+            state.user.id,
+            state.user.role,
         );
 
-        for (const roomSocket of room.sockets) {
-            const roomState =
-                socketStates.get(roomSocket);
-
-            roomState?.conversations.delete(
-                conversationId,
-            );
+        // Notify connected clients
+        for (const s of socketsToNotify) {
+            if (s.readyState === s.OPEN) {
+                s.send(JSON.stringify({
+                    event: "CONVERSATION_CLOSED",
+                    data: { conversationId: String(conversationId) },
+                }));
+            }
         }
 
-        rooms.delete(conversationId);
+        // Clean up sockets tracking
+        for (const s of socketsToNotify) {
+            const roomState = socketStates.get(s);
+            if (roomState) {
+                roomState.conversations.delete(conversationId);
+            }
+        }
+
+        console.log(
+            `Agent ${state.user.id} closed conversation ${conversationId}`,
+        );
     } catch (error) {
         if (
             error instanceof Error &&
@@ -774,10 +802,8 @@ export function createWebSocketServer(
                     }
 
                     room.sockets.delete(socket);
-
-                    if (room.sockets.size === 0) {
-                        rooms.delete(conversationId);
-                    }
+                    // DO NOT delete room here - let explicit close handle cleanup
+                    // This preserves in-memory messages until agent closes conversation
                 }
             }
 
