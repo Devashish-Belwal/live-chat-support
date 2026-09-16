@@ -5,8 +5,7 @@ import { createServer } from "node:http";
 
 import {
     connectRedis,
-    disconnectRedis,
-    redis,
+    disconnectRedis
 } from "./redis";
 import authRouter from "./auth/auth.routes";
 import conversationRouter from "./conversations/conversation.routes";
