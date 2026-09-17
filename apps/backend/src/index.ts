@@ -32,7 +32,7 @@ app.get("/", (_req, res) => {
 
 const server = createServer(app);
 
-const wss = createWebSocketServer(server);
+createWebSocketServer(server);
 
 const PORT = 3001;
 
