@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Conversation } from '@/lib/types';
+import { Button } from '@/components/ui/button';
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
@@ -19,12 +20,12 @@ export default function DashboardPage() {
   useEffect(() => {
     if (loading || !user || user?.role !== 'CANDIDATE') return;
     api.getConversations()
-        .then((conversations: Conversation[]) => setList(conversations))
-        .catch((e: unknown) => {
-          setError(e instanceof Error ? e.message : 'Failed to load conversations');
-          setList([]);
-        });
-  }, [user]);
+      .then((conversations: Conversation[]) => setList(conversations))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : 'Failed to load conversations');
+        setList([]);
+      });
+  }, [loading, user]);
 
   const start = async () => {
     setBusy(true);
@@ -51,16 +52,20 @@ export default function DashboardPage() {
   if (!user || user.role !== 'CANDIDATE') return null;
 
   return (
-    <div className="max-w-5xl mx-auto p-6">
+    <div className="max-w-full p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">My Conversations</h1>
-        <button onClick={start} disabled={busy} className="bg-indigo-600 text-white px-4 py-2 rounded-lg">Start Conversation</button>
+        <Button onClick={start} disabled={busy} className="bg-indigo-600 text-white px-4 py-2 rounded-lg">Start Conversation</Button>
       </div>
       {error && <div className="mb-4 text-red-600">{error}</div>}
-      {list.length === 0 && !error && <div className="text-slate-500">No conversations yet.</div>}
-      <div className="grid gap-3">
+      {list.length === 0
+        && !error
+        && <div className="text-slate-700">
+          No conversations yet.
+        </div>}
+      <div className="flex flex-row flex-wrap justify-between gap-y-4">
         {list.map((c) => (
-          <div key={c.id} className="bg-white border rounded-xl p-4 shadow-sm flex items-center justify-between">
+          <div key={c.id} className="bg-white border rounded-xl p-4 shadow-sm flex items-center justify-between w-[30vw]">
             <div>
               <div className="font-medium">Conversation #{c.id}</div>
               <div className="text-xs text-slate-500">Agent: {c.agent?.name || c.agentId ? 'Assigned' : '—'} · {c.status}</div>

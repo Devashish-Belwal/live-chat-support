@@ -32,7 +32,7 @@ app.get("/", (_req, res) => {
 
 const server = createServer(app);
 
-createWebSocketServer(server);
+const wss = createWebSocketServer(server);
 
 const PORT = 3001;
 
@@ -44,13 +44,50 @@ async function startServer() {
     });
 }
 
+let isShuttingDown = false;
+
 async function shutdown() {
+    if (isShuttingDown) return;
+
+    isShuttingDown = true;
     console.log("Shutting down...");
 
-    server.close(async () => {
+    // 1. Stop accepting new HTTP connections
+    server.close();
+
+    // 2. Close existing WebSocket clients
+    for (const socket of wss.clients) {
+        socket.close(1001, "Server shutting down");
+    }
+
+    // Give clients 5 seconds to close
+    const forceCloseTimer = setTimeout(() => {
+        console.log("Forcefully closing remaining sockets...");
+
+        for (const socket of wss.clients) {
+            if (socket.readyState !== socket.CLOSED) {
+                socket.terminate();
+            }
+        }
+    }, 5000);
+
+    // 3. Close the WebSocket server
+    wss.close(async () => {
+        clearTimeout(forceCloseTimer);
+        console.log("WebSocket server closed");
+
+        // 4. Disconnect Redis
         await disconnectRedis();
+
+        console.log("Shutdown complete");
         process.exit(0);
     });
+
+    // 5. Safety timeout
+    setTimeout(() => {
+        console.error("Shutdown timed out");
+        process.exit(1);
+    }, 10_000).unref();
 }
 
 process.on("SIGINT", shutdown);
