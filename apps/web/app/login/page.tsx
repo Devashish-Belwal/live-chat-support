@@ -26,7 +26,7 @@ export default function LoginPage() {
 
   return (
     <form onSubmit={e => { e.preventDefault(); handleLogin(); }} className="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow">
-      <h1 className="text-2xl font-bold mb-6">Login</h1>
+      <h1 className="text-2xl font-bold mb-6">Login2</h1>
       <input className="w-full border rounded px-3 py-2 mb-3" placeholder="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
       <div className="relative mb-3">
         <input type={show ? 'text' : 'password'} className="w-full border rounded px-3 py-2" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
