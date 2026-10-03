@@ -7,6 +7,7 @@ COPY package.json bun.lock tsconfig.json ./
 
 # Workspace packages
 COPY packages/shared ./packages/shared
+COPY apps/web/package.json ./apps/web/package.json
 
 # Backend
 COPY apps/backend ./apps/backend
