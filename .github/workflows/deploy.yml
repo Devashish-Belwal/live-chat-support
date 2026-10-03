@@ -84,36 +84,36 @@ jobs:
           cache-to: type=gha,mode=max
 
 
-  deploy:
-    name: Deploy to EC2
-    needs: build-and-push
-    runs-on: ubuntu-latest
+  # deploy:
+  #   name: Deploy to EC2
+  #   needs: build-and-push
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - name: Deploy
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+  #   steps:
+  #     - name: Deploy
+  #       uses: appleboy/ssh-action@v1.2.2
+  #       with:
+  #         host: ${{ secrets.EC2_HOST }}
+  #         username: ${{ secrets.EC2_USER }}
+  #         key: ${{ secrets.EC2_SSH_KEY }}
 
-          script: |
-            set -e
+  #         script: |
+  #           set -e
 
-            cd ~/deployments
+  #           cd ~/deployments
 
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
-              docker login \
-              -u "${{ secrets.DOCKERHUB_USERNAME }}" \
-              --password-stdin
+  #           echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
+  #             docker login \
+  #             -u "${{ secrets.DOCKERHUB_USERNAME }}" \
+  #             --password-stdin
 
-            export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
-            export CHAT_IMAGE_TAG="${{ github.sha }}"
+  #           export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+  #           export CHAT_IMAGE_TAG="${{ github.sha }}"
 
-            docker compose pull chat-backend chat-web
+  #           docker compose pull chat-backend chat-web
 
-            docker compose up -d \
-              --remove-orphans \
-              chat-backend chat-web
+  #           docker compose up -d \
+  #             --remove-orphans \
+  #             chat-backend chat-web
 
-            docker compose ps
+  #           docker compose ps
