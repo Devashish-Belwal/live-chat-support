@@ -9,7 +9,7 @@ export default function AgentDashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [list, setList] = useState<Conversation[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -18,7 +18,6 @@ export default function AgentDashboardPage() {
 
   useEffect(() => {
     if (user?.role === 'AGENT') {
-      setBusy(true);
       api.getConversations()
         .then((conversations: Conversation[]) => {
           setList(conversations);

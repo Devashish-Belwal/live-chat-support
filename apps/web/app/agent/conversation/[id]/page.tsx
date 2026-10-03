@@ -9,7 +9,6 @@ import { Conversation } from '@/lib/types';
 export default function AgentConversationPage() {
   const { id } = useParams();
   const router = useRouter();
-  const [conversationMeta, setConversationMeta] = useState<Conversation | null>(null);
   const [sending, setSending] = useState(false);
   const [text, setText] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -25,7 +24,6 @@ export default function AgentConversationPage() {
     error,
     conversation,
     connect,
-    joinConversation,
     sendMessage,
     closeConversation,
     leaveConversation,
@@ -49,7 +47,6 @@ export default function AgentConversationPage() {
     if (!conversationId || isNaN(conversationId)) return;
     api.getConversation(String(conversationId))
       .then((conv: Conversation) => {
-        setConversationMeta(conv);
         metaRef.current = conv;
         setConversation(conv as import('@/hooks/useChatSocket').Conversation);
         if (conv && Array.isArray(conv.messages) && conv.messages.length > 0) {
@@ -63,7 +60,6 @@ export default function AgentConversationPage() {
 
   useEffect(() => {
     if (conversation) {
-      setConversationMeta(conversation as Conversation);
       metaRef.current = conversation as Conversation;
     }
   }, [conversation]);
@@ -72,7 +68,7 @@ export default function AgentConversationPage() {
     if (loading || !user) {
       return;
     }
-    if (conversationMeta && conversationMeta.status === 'ACTIVE') {
+    if (conversation?.status === 'ACTIVE') {
       connect(conversationId);
     }
     return () => {
@@ -82,7 +78,10 @@ export default function AgentConversationPage() {
       }
       cleanup();
     };
-  }, [conversationId, connect, leaveConversation, cleanup, conversationMeta]);
+  }, [conversationId, connect, leaveConversation, cleanup, conversation, loading, user]);
+
+  const isClosed = conversation?.status === 'CLOSED';
+  const statusText = conversation?.status || 'Loading...';
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
@@ -93,10 +92,7 @@ export default function AgentConversationPage() {
     sendMessage(conversationId, trimmed);
     setText('');
     setTimeout(() => setSending(false), 300);
-  }, [connected, text, sending, conversationMeta, conversationId, sendMessage]);
-
-  const statusText = conversation?.status || conversationMeta?.status || (conversationMeta ? 'Loading...' : 'Unknown');
-  const isClosed = (conversation?.status ?? conversationMeta?.status) === 'CLOSED';
+  }, [connected, text, sending, conversationId, sendMessage, isClosed]);
   const canSend = connected && !isClosed && !sending && !reconnecting;
 
   return (

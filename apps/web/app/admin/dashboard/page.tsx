@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
@@ -13,20 +13,26 @@ export default function AdminAnalytics() {
   const [error, setError] = useState('');
   const [pendingId, setPendingId] = useState<number | null>(null);
 
-  const fetchData = () => {
+  const fetchData = useCallback(() => {
     if (authLoading || !user || user?.role !== 'ADMIN') return;
     setLoading(true);
     api.getAnalytics()
       .then((r: Analytics) => { setData(r); setError(''); })
       .catch((e: unknown) => { setError(e instanceof Error ? e.message : 'Failed'); })
       .finally(() => setLoading(false));
-  };
+  }, [authLoading, user, setData, setError]);
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login');
   }, [authLoading, user, router]);
 
-  useEffect(() => { if (!authLoading && user?.role === 'ADMIN') fetchData(); }, [user, authLoading]);
+  useEffect(() => {
+    if (authLoading || !user || user?.role !== 'ADMIN') return;
+    api.getAnalytics()
+      .then((r: Analytics) => { setData(r); setError(''); })
+      .catch((e: unknown) => { setError(e instanceof Error ? e.message : 'Failed'); })
+      .finally(() => setLoading(false));
+  }, [authLoading, user]);
 
   const supervisors: AnalyticsSupervisor[] = data?.supervisors || [];
   const agents: AdminAgent[] = data?.agents || [];

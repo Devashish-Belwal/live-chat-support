@@ -10,11 +10,11 @@ export default function SupervisorDashboardPage() {
   const router = useRouter();
 
   const [list, setList] = useState<Conversation[]>([]);
-  const [conversationsBusy, setConversationsBusy] = useState(false);
+  const [conversationsBusy, setConversationsBusy] = useState(true);
   const [conversationsError, setConversationsError] = useState<string | null>(null);
 
   const [agents, setAgents] = useState<SupervisorAgent[]>([]);
-  const [agentsBusy, setAgentsBusy] = useState(false);
+  const [agentsBusy, setAgentsBusy] = useState(true);
   const [agentsError, setAgentsError] = useState<string | null>(null);
 
   const [assigningId, setAssigningId] = useState<number | null>(null);
@@ -22,15 +22,11 @@ export default function SupervisorDashboardPage() {
 
   useEffect(() => {
     if (authLoading || !user || user?.role !== "SUPERVISOR") return;
-    setConversationsBusy(true);
-      setConversationsError(null);
       api.getConversations()
         .then((conversations) => setList(conversations))
         .catch((e: unknown) => setConversationsError(e instanceof Error ? e.message : "Failed to load conversations"))
         .finally(() => setConversationsBusy(false));
 
-      setAgentsBusy(true);
-      setAgentsError(null);
       api.getSupervisorAgents()
         .then((agents) => setAgents(agents))
         .catch((e: unknown) => setAgentsError(e instanceof Error ? e.message : "Failed to load agents"))

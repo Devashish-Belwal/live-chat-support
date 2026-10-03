@@ -1,5 +1,3 @@
-let nextWsId = 1;
-let nextConnectId = 1;
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAccessToken } from '@/lib/api';
 
@@ -134,7 +132,7 @@ export function useChatSocket() {
     } catch {
       setError('Failed to connect');
     }
-  }, [cleanup, reconnectRef]);
+  }, [cleanup, reconnectRef, conversation]);
 
   const reconnect = useCallback((convId?: number | string) => {
     reconnectTimer.current = setTimeout(() => {
